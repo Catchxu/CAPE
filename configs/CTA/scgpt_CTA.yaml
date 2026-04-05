@@ -9,11 +9,11 @@ task:
 model:
   name: scgpt
   path: assets/scgpt
-  hf_repo_id: null
+  hf_repo_id: kaichenxu/cape_scgpt
   files:
-    config: args.json
+    config: config.json
     vocab: vocab.json
-    weights: best_model.pt
+    weights: model.safetensors
 
 data:
   path: /path/to/dataset.h5ad

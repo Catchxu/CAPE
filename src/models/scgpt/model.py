@@ -1,5 +1,6 @@
 import gc
 import math
+import warnings
 from typing import Dict, Mapping, Optional, Tuple, Any, Union
 
 import torch
@@ -16,10 +17,54 @@ try:
 
     flash_attn_available = True
 except ImportError:
-    import warnings
+    warnings.warn("flash_attn is not installed; using local attention fallback")
+    flash_attn_available = True
 
-    warnings.warn("flash_attn is not installed")
-    flash_attn_available = False
+    class FlashMHA(nn.Module):
+        def __init__(
+            self,
+            embed_dim,
+            num_heads,
+            batch_first=True,
+            attention_dropout=0.0,
+            **kwargs,
+        ):
+            super().__init__()
+            if embed_dim % num_heads != 0:
+                raise ValueError("embed_dim must be divisible by num_heads")
+            self.embed_dim = embed_dim
+            self.num_heads = num_heads
+            self.batch_first = batch_first
+            self.head_dim = embed_dim // num_heads
+            self.scale = self.head_dim ** -0.5
+            self.Wqkv = nn.Linear(embed_dim, 3 * embed_dim)
+            self.out_proj = nn.Linear(embed_dim, embed_dim)
+            self.attn_dropout = nn.Dropout(attention_dropout)
+
+        def forward(self, x, key_padding_mask=None, **kwargs):
+            if not self.batch_first:
+                x = x.transpose(0, 1)
+
+            batch_size, seq_len, _ = x.shape
+            qkv = self.Wqkv(x)
+            qkv = qkv.view(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+            qkv = qkv.permute(2, 0, 3, 1, 4)
+            query, key, value = qkv[0], qkv[1], qkv[2]
+
+            scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
+            if key_padding_mask is not None:
+                keep_mask = key_padding_mask.to(dtype=torch.bool)
+                scores = scores.masked_fill(~keep_mask[:, None, None, :], float("-inf"))
+
+            attention = torch.softmax(scores, dim=-1)
+            attention = self.attn_dropout(attention)
+            context = torch.matmul(attention, value)
+            context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
+            output = self.out_proj(context)
+
+            if not self.batch_first:
+                output = output.transpose(0, 1)
+            return output, attention
 
 from .dsbn import DomainSpecificBatchNorm1d
 from .grad_reverse import grad_reverse
