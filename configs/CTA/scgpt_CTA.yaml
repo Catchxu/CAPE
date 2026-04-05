@@ -1,0 +1,40 @@
+defaults:
+  - ../models/scgpt.yaml
+
+task:
+  name: CTA
+  metrics:
+    - accuracy
+    - macro_f1
+    - weighted_f1
+  save_probabilities: true
+
+data:
+  path: /path/to/dataset.h5ad
+  label_column: celltype
+  batch_column: null
+  gene_column: null
+  input_layer: null
+  preprocess:
+    normalize_total: 10000.0
+    log1p: false
+  split:
+    mode: stratified
+    random_state: 42
+    ratios:
+      train: 0.8
+      val: 0.1
+      test: 0.1
+
+train:
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.0
+  epochs: 10
+
+run:
+  seed: 42
+  device: auto
+  run_name: scgpt_cta_run
+  logs_root: logs
+  results_root: results

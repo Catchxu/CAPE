@@ -10,7 +10,7 @@ from functools import partial
 from contextlib import contextmanager
 
 from local_attention import LocalAttention
-from reversible import ReversibleSequence, SequentialSequence
+from .reversible import ReversibleSequence, SequentialSequence
 
 try:
     from apex import amp

@@ -1,0 +1,19 @@
+model:
+  name: scbert
+  pretrained_path: /path/to/scbert_pretrained.pth
+  reference_genes_path: /path/to/scbert_reference_genes.txt
+  architecture:
+    bin_num: 5
+    num_tokens: 7
+    max_seq_len: 16907
+    dim: 200
+    depth: 6
+    heads: 10
+    local_attn_heads: 0
+    g2v_position_emb: true
+    head_hidden_dim: 128
+    dropout: 0.0
+  freeze:
+    freeze_backbone: true
+    train_norm: true
+    train_last_performer_layer: true
