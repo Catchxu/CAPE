@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from scipy import sparse
 
+from .pretrained import resolve_pretrained_dir
+
 
 class ScBertProcessor:
     model_input_names = ["input_ids"]
@@ -28,7 +30,15 @@ class ScBertProcessor:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
-        base_path = Path(pretrained_model_name_or_path)
+        cache_dir = kwargs.pop("cache_dir", None)
+        revision = kwargs.pop("revision", None)
+        local_files_only = kwargs.pop("local_files_only", False)
+        base_path = resolve_pretrained_dir(
+            pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            revision=revision,
+            local_files_only=local_files_only,
+        )
         preprocessor_path = base_path / "preprocessor_config.json"
         if not preprocessor_path.exists():
             raise FileNotFoundError(f"Missing scBERT preprocessor config: {preprocessor_path}")

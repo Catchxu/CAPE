@@ -10,6 +10,7 @@ from ...data.label_utils import encode_labels
 from ...utils.metrics import compute_classification_metrics
 from .model import ScBertClassifier
 from .modeling_scbert import ScBertModel
+from .pretrained import get_pretrained_source
 from .processing_scbert import ScBertProcessor
 from .configuration_scbert import ScBertConfig
 
@@ -25,14 +26,14 @@ class ScBertBackend:
         model_cfg = config["model"]
         train_cfg = config["train"]
         device = _resolve_device(config["run"]["device"])
+        pretrained_source = get_pretrained_source(model_cfg)
         logger.info("Using device %s", device)
 
-        processor = ScBertProcessor.from_pretrained(model_cfg["path"])
-        model_config = ScBertConfig.from_pretrained(model_cfg["path"])
+        processor = ScBertProcessor.from_pretrained(pretrained_source)
+        model_config = ScBertConfig.from_pretrained(pretrained_source)
         logger.info(
-            "Loaded scBERT bundle: path=%s hf_repo_id=%s vocab_size=%d max_seq_len=%d",
-            model_cfg["path"],
-            model_cfg.get("hf_repo_id"),
+            "Loaded scBERT backbone source=%s vocab_size=%d max_seq_len=%d",
+            pretrained_source,
             len(processor.vocab),
             model_config.max_position_embeddings,
         )
@@ -58,7 +59,7 @@ class ScBertBackend:
         )
 
         backbone = ScBertModel.from_pretrained(
-            model_cfg["path"],
+            pretrained_source,
             config=model_config,
         )
         model = ScBertClassifier(

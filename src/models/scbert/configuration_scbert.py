@@ -1,5 +1,7 @@
 from transformers import PretrainedConfig
 
+from .pretrained import resolve_pretrained_dir
+
 
 class ScBertConfig(PretrainedConfig):
     model_type = "scbert"
@@ -45,3 +47,16 @@ class ScBertConfig(PretrainedConfig):
         self.weight_file = weight_file
         self.preprocessor_file = preprocessor_file
         self.classifier_type = classifier_type
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
+        cache_dir = kwargs.get("cache_dir")
+        revision = kwargs.get("revision")
+        local_files_only = kwargs.get("local_files_only", False)
+        resolved = resolve_pretrained_dir(
+            pretrained_model_name_or_path,
+            cache_dir=cache_dir,
+            revision=revision,
+            local_files_only=local_files_only,
+        )
+        return super().from_pretrained(str(resolved), **kwargs)
