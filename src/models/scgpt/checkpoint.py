@@ -6,11 +6,21 @@ import torch
 from .tokenizer import GeneVocab
 
 
-def load_scgpt_checkpoint_assets(pretrained_dir: str):
-    checkpoint_dir = Path(pretrained_dir)
-    model_path = checkpoint_dir / "best_model.pt"
-    args_path = checkpoint_dir / "args.json"
-    vocab_path = checkpoint_dir / "vocab.json"
+def load_scgpt_checkpoint_assets(model_cfg):
+    checkpoint_dir = Path(model_cfg["path"])
+    if not checkpoint_dir.exists():
+        hf_repo_id = model_cfg.get("hf_repo_id")
+        if hf_repo_id:
+            raise FileNotFoundError(
+                f"Local scGPT asset bundle not found at {checkpoint_dir}. "
+                f"Download assets from Hugging Face repo '{hf_repo_id}' first."
+            )
+        raise FileNotFoundError(f"Local scGPT asset bundle not found at {checkpoint_dir}")
+
+    file_cfg = model_cfg.get("files", {})
+    model_path = checkpoint_dir / file_cfg.get("weights", "best_model.pt")
+    args_path = checkpoint_dir / file_cfg.get("config", "args.json")
+    vocab_path = checkpoint_dir / file_cfg.get("vocab", "vocab.json")
 
     if not model_path.exists():
         raise FileNotFoundError(f"Missing scGPT checkpoint weights: {model_path}")
@@ -23,7 +33,7 @@ def load_scgpt_checkpoint_assets(pretrained_dir: str):
         checkpoint_args = json.load(handle)
     vocab = GeneVocab.from_file(vocab_path)
     weights = torch.load(model_path, map_location="cpu")
-    return checkpoint_args, vocab, weights
+    return checkpoint_args, vocab, weights, checkpoint_dir
 
 
 def load_scgpt_pretrained(model, pretrained_params, logger):

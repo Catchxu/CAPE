@@ -1,7 +1,7 @@
 import anndata as ad
 import numpy as np
 
-from src.models.scbert.utils import align_adata_to_gene_order, matrix_to_scbert_sequences
+from src.models.scbert.utils import align_adata_to_vocab, matrix_to_scbert_sequences
 from src.models.scgpt.tokenizer import GeneVocab, tokenize_and_pad_batch
 from src.models.scgpt.utils import filter_adata_by_vocab
 
@@ -9,7 +9,8 @@ from src.models.scgpt.utils import filter_adata_by_vocab
 def test_scbert_alignment_and_sequence_conversion():
     adata = ad.AnnData(np.array([[1.2, 0.0, 3.9], [0.0, 2.1, 1.4]], dtype=np.float32))
     adata.var_names = ["g2", "g1", "g3"]
-    aligned = align_adata_to_gene_order(adata, ["g1", "g2", "g4"])
+    vocab = {"g1": 0, "g2": 1, "g4": 2}
+    aligned = align_adata_to_vocab(adata, vocab)
     sequences = matrix_to_scbert_sequences(aligned, max_bin=5)
     assert sequences.shape == (2, 4)
     assert sequences[0, -1] == 0

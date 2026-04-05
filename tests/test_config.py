@@ -11,3 +11,5 @@ def test_experiment_configs_share_common_schema():
     assert scgpt_cfg["task"]["name"] == "CTA"
     assert scbert_cfg["model"]["name"] == "scbert"
     assert scgpt_cfg["model"]["name"] == "scgpt"
+    assert scbert_cfg["model"]["path"] == "assets/scbert"
+    assert scgpt_cfg["model"]["path"] == "assets/scgpt"

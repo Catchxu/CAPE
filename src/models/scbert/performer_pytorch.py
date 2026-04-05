@@ -437,11 +437,27 @@ def apply_rotary_pos_emb(q, k, sinu_pos):
 # sinusoidal positional embeddings
 
 class Gene2VecPositionalEmbedding(nn.Module):
-    def __init__(self, dim, max_seq_len):
+    def __init__(self, dim, max_seq_len, gene2vec_weight):
         super().__init__()
-        gene2vec_weight = np.load('../data/gene2vec_16906.npy')
-        gene2vec_weight = np.concatenate((gene2vec_weight, np.zeros((1, gene2vec_weight.shape[1]))), axis=0)
-        gene2vec_weight = torch.from_numpy(gene2vec_weight)
+        if gene2vec_weight is None:
+            gene2vec_weight = torch.zeros((max_seq_len, dim), dtype=torch.float32)
+        else:
+            if isinstance(gene2vec_weight, np.ndarray):
+                gene2vec_weight = torch.from_numpy(gene2vec_weight.astype(np.float32))
+            else:
+                gene2vec_weight = gene2vec_weight.detach().cpu().float()
+            if gene2vec_weight.ndim != 2:
+                raise ValueError(f"Expected 2D gene2vec weights, got shape {tuple(gene2vec_weight.shape)}")
+            if gene2vec_weight.shape[1] != dim:
+                raise ValueError(
+                    f"Gene2vec width {gene2vec_weight.shape[1]} does not match model dim {dim}"
+                )
+            if gene2vec_weight.shape[0] + 1 != max_seq_len:
+                raise ValueError(
+                    f"Gene2vec rows {gene2vec_weight.shape[0]} must equal max_seq_len - 1 ({max_seq_len - 1})"
+                )
+            padding_row = torch.zeros((1, gene2vec_weight.shape[1]), dtype=gene2vec_weight.dtype)
+            gene2vec_weight = torch.cat((gene2vec_weight, padding_row), dim=0)
         self.emb = nn.Embedding.from_pretrained(gene2vec_weight)
 
     def forward(self, x):
@@ -571,6 +587,7 @@ class PerformerLM(nn.Module):
         no_projection = False,
         tie_embed = False,                  # False: output is num of tokens, True: output is dim of tokens  //multiply final embeddings with token weights for logits, like gpt decoder//
         g2v_position_emb = True,            # priority: gene2vec, no embedding
+        gene2vec_weight = None,
         auto_check_redraw = True,
         qkv_bias = False
     ):
@@ -581,7 +598,7 @@ class PerformerLM(nn.Module):
         self.token_emb = nn.Embedding(num_tokens, dim)
 
         if g2v_position_emb:
-            self.pos_emb = Gene2VecPositionalEmbedding(dim, max_seq_len)
+            self.pos_emb = Gene2VecPositionalEmbedding(dim, max_seq_len, gene2vec_weight)
             self.layer_pos_emb = Always(None)
         else:
             self.pos_emb = torch.zeros_like

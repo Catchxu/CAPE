@@ -1,6 +1,6 @@
 import argparse
 
-from .pipeline.cta_pipeline import run_cta_pipeline
+from .pipeline import run_pipeline
 from .utils.config import load_config
 
 
@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    run_cta_pipeline(config)
+    run_pipeline(config)
 
 
 if __name__ == "__main__":

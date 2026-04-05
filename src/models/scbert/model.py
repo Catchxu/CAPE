@@ -1,6 +1,6 @@
 from torch import nn
 
-from .performer_pytorch import PerformerLM
+from .modeling_scbert import ScBertModel
 
 
 class ClassificationHead(nn.Module):
@@ -31,18 +31,10 @@ class ClassificationHead(nn.Module):
 
 
 class ScBertClassifier(nn.Module):
-    def __init__(self, architecture: dict, num_classes: int):
+    def __init__(self, backbone: ScBertModel, architecture: dict, num_classes: int):
         super().__init__()
-        self.backbone = PerformerLM(
-            num_tokens=architecture["num_tokens"],
-            dim=architecture["dim"],
-            depth=architecture["depth"],
-            max_seq_len=architecture["max_seq_len"],
-            heads=architecture["heads"],
-            local_attn_heads=architecture.get("local_attn_heads", 0),
-            g2v_position_emb=architecture.get("g2v_position_emb", True),
-        )
-        self.backbone.to_out = ClassificationHead(
+        self.backbone = backbone
+        self.classifier = ClassificationHead(
             seq_len=architecture["max_seq_len"],
             dropout=architecture.get("dropout", 0.0),
             hidden_dim=architecture.get("head_hidden_dim", 128),
@@ -50,4 +42,5 @@ class ScBertClassifier(nn.Module):
         )
 
     def forward(self, input_ids):
-        return self.backbone(input_ids)
+        output = self.backbone(input_ids=input_ids, return_dict=True)
+        return self.classifier(output.last_hidden_state)

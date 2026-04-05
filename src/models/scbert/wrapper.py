@@ -8,9 +8,10 @@ from torch.utils.data import DataLoader
 from ...data.dataset import DictionaryTensorDataset
 from ...data.label_utils import encode_labels
 from ...utils.metrics import compute_classification_metrics
-from .checkpoint import load_scbert_pretrained
 from .model import ScBertClassifier
-from .utils import align_adata_to_gene_order, load_gene_list, matrix_to_scbert_sequences
+from .modeling_scbert import ScBertModel
+from .processing_scbert import ScBertProcessor
+from .configuration_scbert import ScBertConfig
 
 
 def _resolve_device(device_name: str):
@@ -26,16 +27,25 @@ class ScBertBackend:
         device = _resolve_device(config["run"]["device"])
         logger.info("Using device %s", device)
 
-        reference_genes = load_gene_list(model_cfg["reference_genes_path"])
+        processor = ScBertProcessor.from_pretrained(model_cfg["path"])
+        model_config = ScBertConfig.from_pretrained(model_cfg["path"])
+        logger.info(
+            "Loaded scBERT bundle: path=%s hf_repo_id=%s vocab_size=%d max_seq_len=%d",
+            model_cfg["path"],
+            model_cfg.get("hf_repo_id"),
+            len(processor.vocab),
+            model_config.max_position_embeddings,
+        )
+
         train_loader = self._build_loader(
             train_adata,
             label_encoder,
             config,
-            reference_genes,
+            processor,
             shuffle=True,
         )
         val_loader = (
-            self._build_loader(val_adata, label_encoder, config, reference_genes, shuffle=False)
+            self._build_loader(val_adata, label_encoder, config, processor, shuffle=False)
             if val_adata is not None
             else None
         )
@@ -43,15 +53,23 @@ class ScBertBackend:
             test_adata,
             label_encoder,
             config,
-            reference_genes,
+            processor,
             shuffle=False,
         )
 
+        backbone = ScBertModel.from_pretrained(
+            model_cfg["path"],
+            config=model_config,
+        )
         model = ScBertClassifier(
-            architecture=model_cfg["architecture"],
+            backbone=backbone,
+            architecture={
+                "max_seq_len": model_config.max_position_embeddings,
+                "dropout": model_config.classifier_dropout,
+                "head_hidden_dim": model_config.classifier_hidden_dim,
+            },
             num_classes=len(label_encoder.classes_),
         )
-        model = load_scbert_pretrained(model, model_cfg["pretrained_path"], logger)
         self._apply_freeze_policy(model, model_cfg.get("freeze", {}), logger)
         model.to(device)
 
@@ -97,11 +115,19 @@ class ScBertBackend:
             "probabilities": test_result["probabilities"],
         }
 
-    def _build_loader(self, adata, label_encoder, config, reference_genes, shuffle: bool):
-        sequences, labels = self._prepare_split(adata, label_encoder, config, reference_genes)
+    def _build_loader(self, adata, label_encoder, config, processor, shuffle: bool):
+        tensors = processor.encode_adata(
+            adata,
+            gene_column=config["data"].get("gene_column"),
+            return_tensors="pt",
+        )
+        labels = encode_labels(
+            adata.obs[config["data"]["label_column"]].astype(str).tolist(),
+            label_encoder,
+        )
         dataset = DictionaryTensorDataset(
             {
-                "input_ids": torch.from_numpy(sequences).long(),
+                "input_ids": tensors["input_ids"].long(),
                 "labels": torch.tensor(labels, dtype=torch.long),
             }
         )
@@ -111,34 +137,18 @@ class ScBertBackend:
             shuffle=shuffle,
         )
 
-    def _prepare_split(self, adata, label_encoder, config, reference_genes):
-        aligned = align_adata_to_gene_order(
-            adata,
-            reference_genes,
-            gene_column=config["data"].get("gene_column"),
-        )
-        sequences = matrix_to_scbert_sequences(
-            aligned_matrix=aligned,
-            max_bin=int(config["model"]["architecture"]["bin_num"]),
-        )
-        labels = encode_labels(
-            adata.obs[config["data"]["label_column"]].astype(str).tolist(),
-            label_encoder,
-        )
-        return sequences, labels
-
     def _apply_freeze_policy(self, model, freeze_cfg, logger):
         if not freeze_cfg.get("freeze_backbone", True):
             return
         for param in model.backbone.parameters():
             param.requires_grad = False
         if freeze_cfg.get("train_norm", True):
-            for param in model.backbone.norm.parameters():
+            for param in model.backbone.scbert.norm.parameters():
                 param.requires_grad = True
         if freeze_cfg.get("train_last_performer_layer", True):
-            for param in model.backbone.performer.net.layers[-2].parameters():
+            for param in model.backbone.scbert.performer.net.layers[-2].parameters():
                 param.requires_grad = True
-        for param in model.backbone.to_out.parameters():
+        for param in model.classifier.parameters():
             param.requires_grad = True
         trainable = sum(param.numel() for param in model.parameters() if param.requires_grad)
         logger.info("scBERT trainable parameters after freezing: %d", trainable)
@@ -150,7 +160,7 @@ class ScBertBackend:
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             optimizer.zero_grad()
-            logits = model(input_ids)
+            logits = model(input_ids=input_ids)
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
@@ -167,7 +177,7 @@ class ScBertBackend:
             for batch in loader:
                 input_ids = batch["input_ids"].to(device)
                 labels = batch["labels"].to(device)
-                logits = model(input_ids)
+                logits = model(input_ids=input_ids)
                 loss = criterion(logits, labels)
                 probs = torch.softmax(logits, dim=-1)
                 preds = probs.argmax(dim=-1)

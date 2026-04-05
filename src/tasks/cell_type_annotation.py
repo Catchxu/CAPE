@@ -69,6 +69,8 @@ def run_cell_type_annotation(config):
             "metrics": str(result_dir / "metrics.json"),
         },
     }
+    if backend_result.get("artifacts"):
+        summary["artifacts"].update(backend_result["artifacts"])
     save_json(result_dir / "summary.json", summary)
 
     save_predictions(

@@ -176,3 +176,6 @@ cython_debug/
 # Runtime outputs
 logs/
 results/
+
+# Local model assets for later Hugging Face upload
+assets/

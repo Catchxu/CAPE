@@ -22,8 +22,14 @@ class ScGptBackend:
     def run_cta(self, config, train_adata, val_adata, test_adata, label_encoder, logger):
         device = _resolve_device(config["run"]["device"])
         logger.info("Using device %s", device)
-        checkpoint_args, vocab, pretrained_weights = load_scgpt_checkpoint_assets(
-            config["model"]["pretrained_dir"]
+        checkpoint_args, vocab, pretrained_weights, checkpoint_dir = load_scgpt_checkpoint_assets(
+            config["model"]
+        )
+        logger.info(
+            "Loaded scGPT bundle: path=%s hf_repo_id=%s vocab_size=%d",
+            checkpoint_dir,
+            config["model"].get("hf_repo_id"),
+            len(vocab),
         )
         for token in ["<pad>", "<cls>", "<eoc>"]:
             vocab.append_token(token)
