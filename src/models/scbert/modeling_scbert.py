@@ -5,7 +5,7 @@ from transformers.modeling_outputs import BaseModelOutput
 
 from .configuration_scbert import ScBertConfig
 from .performer_pytorch import PerformerLM
-from .pretrained import resolve_pretrained_dir
+from ..pretrained import resolve_pretrained_from_kwargs
 from .reversible import ReversibleSequence, SequentialSequence  # noqa: F401
 
 
@@ -48,15 +48,7 @@ class ScBertModel(ScBertPreTrainedModel):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        cache_dir = kwargs.get("cache_dir")
-        revision = kwargs.get("revision")
-        local_files_only = kwargs.get("local_files_only", False)
-        resolved = resolve_pretrained_dir(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            revision=revision,
-            local_files_only=local_files_only,
-        )
+        resolved = resolve_pretrained_from_kwargs(pretrained_model_name_or_path, kwargs)
         return super().from_pretrained(str(resolved), *model_args, **kwargs)
 
     def forward(

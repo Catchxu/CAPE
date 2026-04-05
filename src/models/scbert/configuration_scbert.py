@@ -1,6 +1,6 @@
 from transformers import PretrainedConfig
 
-from .pretrained import resolve_pretrained_dir
+from ..pretrained import resolve_pretrained_from_kwargs
 
 
 class ScBertConfig(PretrainedConfig):
@@ -50,13 +50,5 @@ class ScBertConfig(PretrainedConfig):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
-        cache_dir = kwargs.get("cache_dir")
-        revision = kwargs.get("revision")
-        local_files_only = kwargs.get("local_files_only", False)
-        resolved = resolve_pretrained_dir(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            revision=revision,
-            local_files_only=local_files_only,
-        )
+        resolved = resolve_pretrained_from_kwargs(pretrained_model_name_or_path, kwargs)
         return super().from_pretrained(str(resolved), **kwargs)

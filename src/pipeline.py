@@ -1,8 +1,8 @@
-from .tasks.cell_type_annotation import run_cell_type_annotation
+from .CTA import run_cta
 
 
 def run_pipeline(config):
     task_name = config["task"]["name"]
     if task_name == "CTA":
-        return run_cell_type_annotation(config)
+        return run_cta(config)
     raise ValueError(f"Unsupported task: {task_name}")

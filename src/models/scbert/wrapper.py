@@ -7,10 +7,10 @@ from torch.utils.data import DataLoader
 
 from ...data.dataset import DictionaryTensorDataset
 from ...data.label_utils import encode_labels
-from ...utils.metrics import compute_classification_metrics
+from ...CTA.metrics import compute_cta_metrics
+from ..pretrained import get_pretrained_source
 from .model import ScBertClassifier
 from .modeling_scbert import ScBertModel
-from .pretrained import get_pretrained_source
 from .processing_scbert import ScBertProcessor
 from .configuration_scbert import ScBertConfig
 
@@ -189,7 +189,7 @@ class ScBertBackend:
         predictions = torch.cat(predictions, dim=0).numpy()
         probabilities = torch.cat(probabilities, dim=0).numpy()
         targets = torch.cat(targets, dim=0).numpy()
-        metrics = compute_classification_metrics(targets, predictions)
+        metrics = compute_cta_metrics(targets, predictions)
         return {
             "loss": total_loss / max(len(loader), 1),
             "predictions": predictions,

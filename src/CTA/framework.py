@@ -3,17 +3,12 @@ import numpy as np
 from ..data.label_utils import build_label_encoder, encode_labels
 from ..data.preprocess import load_and_prepare_adata, split_adata
 from ..models import get_backend
-from ..utils.io import (
-    ensure_run_directories,
-    save_json,
-    save_predictions,
-    save_yaml,
-)
+from ..utils.io import ensure_run_directories, save_json, save_predictions, save_yaml
 from ..utils.logger import setup_logger
 from ..utils.seed import seed_everything
 
 
-def run_cell_type_annotation(config):
+def run_cta(config):
     model_name = config["model"]["name"]
     run_name = config["run"]["run_name"]
     log_dir, result_dir = ensure_run_directories(config)

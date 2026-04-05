@@ -7,10 +7,7 @@ import torch
 
 class GeneVocab:
     def __init__(self, token_to_idx):
-        self.token_to_idx = dict(token_to_idx)
-        self.idx_to_token = [None] * len(self.token_to_idx)
-        for token, idx in self.token_to_idx.items():
-            self.idx_to_token[int(idx)] = token
+        self.token_to_idx = {token: int(idx) for token, idx in token_to_idx.items()}
 
     @classmethod
     def from_file(cls, file_path):
@@ -32,13 +29,6 @@ class GeneVocab:
 
     def __len__(self):
         return len(self.token_to_idx)
-
-    def append_token(self, token):
-        if token in self.token_to_idx:
-            return
-        idx = len(self.token_to_idx)
-        self.token_to_idx[token] = idx
-        self.idx_to_token.append(token)
 
     def get_stoi(self):
         return dict(self.token_to_idx)

@@ -4,7 +4,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from src.tasks.cell_type_annotation import run_cell_type_annotation
+from src.CTA.framework import run_cta
 
 
 class FakeBackend:
@@ -57,8 +57,8 @@ def test_pipeline_writes_standard_outputs(tmp_path, monkeypatch):
         },
     }
 
-    monkeypatch.setattr("src.tasks.cell_type_annotation.get_backend", lambda _: FakeBackend())
-    run_cell_type_annotation(config)
+    monkeypatch.setattr("src.CTA.framework.get_backend", lambda _: FakeBackend())
+    run_cta(config)
 
     result_dir = tmp_path / "results" / "CTA" / "scbert" / "smoke"
     assert (result_dir / "predictions.csv").exists()

@@ -7,11 +7,11 @@ from torch.utils.data import DataLoader
 
 from ...data.dataset import DictionaryTensorDataset
 from ...data.label_utils import encode_labels
-from ...utils.metrics import compute_classification_metrics
+from ...CTA.metrics import compute_cta_metrics
+from ..pretrained import get_pretrained_source
 from .configuration_scgpt import ScGptConfig
 from .model import ClsDecoder
 from .modeling_scgpt import ScGptModel
-from .pretrained import get_pretrained_source
 from .processing_scgpt import ScGptProcessor
 from .utils import get_batch_ids
 
@@ -206,7 +206,7 @@ class ScGptBackend:
         predictions = torch.cat(all_preds, dim=0).numpy()
         probabilities = torch.cat(all_probs, dim=0).numpy()
         targets = torch.cat(all_targets, dim=0).numpy()
-        metrics = compute_classification_metrics(targets, predictions)
+        metrics = compute_cta_metrics(targets, predictions)
         return {
             "loss": total_loss / max(len(loader), 1),
             "predictions": predictions,

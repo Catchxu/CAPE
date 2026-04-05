@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 
-from .pretrained import resolve_pretrained_dir
+from ..pretrained import resolve_pretrained_from_kwargs
 from .tokenizer import GeneVocab, random_mask_value, tokenize_and_pad_batch
 from .utils import bin_matrix, filter_adata_by_vocab, get_input_matrix
 
@@ -37,15 +37,11 @@ class ScGptProcessor:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
-        cache_dir = kwargs.pop("cache_dir", None)
-        revision = kwargs.pop("revision", None)
-        local_files_only = kwargs.pop("local_files_only", False)
-        base_path = resolve_pretrained_dir(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            revision=revision,
-            local_files_only=local_files_only,
-        )
+        kwargs = dict(kwargs)
+        base_path = resolve_pretrained_from_kwargs(pretrained_model_name_or_path, kwargs)
+        kwargs.pop("cache_dir", None)
+        kwargs.pop("revision", None)
+        kwargs.pop("local_files_only", None)
         preprocessor_path = base_path / "preprocessor_config.json"
         if not preprocessor_path.exists():
             raise FileNotFoundError(f"Missing scGPT preprocessor config: {preprocessor_path}")

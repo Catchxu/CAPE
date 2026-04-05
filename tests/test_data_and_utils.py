@@ -3,7 +3,7 @@ import numpy as np
 
 from src.data.label_utils import build_label_encoder, encode_labels
 from src.data.preprocess import split_adata
-from src.utils.metrics import compute_classification_metrics
+from src.CTA.metrics import compute_cta_metrics
 
 
 def _build_adata():
@@ -55,5 +55,5 @@ def test_column_split_respects_labels():
 
 
 def test_metrics_include_required_keys():
-    metrics = compute_classification_metrics([0, 1, 1, 0], [0, 1, 0, 0])
+    metrics = compute_cta_metrics([0, 1, 1, 0], [0, 1, 0, 0])
     assert {"accuracy", "macro_f1", "weighted_f1"} <= set(metrics.keys())
