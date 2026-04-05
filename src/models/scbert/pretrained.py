@@ -38,5 +38,6 @@ def resolve_pretrained_dir(
 def get_pretrained_source(model_cfg):
     path = model_cfg.get("path")
     if path is not None and Path(str(path)).exists():
+        # Prefer an existing local bundle over any remote HF identifier.
         return str(path)
     return model_cfg.get("hf_repo_id") or str(path)

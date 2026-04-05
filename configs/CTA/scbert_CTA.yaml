@@ -9,7 +9,7 @@ task:
 model:
   name: scbert
   path: assets/scbert
-  hf_repo_id: null
+  hf_repo_id: kaichenxu/cape_scbert
   files:
     config: config.json
     vocab: vocab.json
