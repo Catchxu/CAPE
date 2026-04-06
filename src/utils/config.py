@@ -11,9 +11,9 @@ def _load_config_recursive(config_path: Path):
     with config_path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle) or {}
 
-    defaults = config.pop("defaults", [])
+    includes = config.pop("includes", [])
     merged = {}
-    for relative_path in defaults:
+    for relative_path in includes:
         default_path = (config_path.parent / relative_path).resolve()
         default_config = _load_config_recursive(default_path)
         merged = _deep_merge(merged, default_config)

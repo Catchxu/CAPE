@@ -1,5 +1,5 @@
-defaults:
-  - ../CAPE/cape_scgpt.yaml
+includes:
+  - ../cape_scgpt.yaml
 
 task:
   name: CTA
