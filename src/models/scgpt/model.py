@@ -1,6 +1,7 @@
 import gc
 import math
 import warnings
+from copy import deepcopy
 from typing import Dict, Mapping, Optional, Tuple, Any, Union
 
 import torch
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.distributions import Bernoulli
 from tqdm import trange
+from ..cape.rope import apply_batched_rotary_pos_emb, build_rope_cache
 
 try:
     from flash_attn.flash_attention import FlashMHA
@@ -110,6 +112,7 @@ class TransformerModel(nn.Module):
         self.cell_emb_style = cell_emb_style
         self.explicit_zero_prob = explicit_zero_prob
         self.norm_scheme = "pre" if pre_norm else "post"
+        self.fast_transformer_backend = fast_transformer_backend
         if self.input_emb_style not in ["category", "continuous", "scaling"]:
             raise ValueError(
                 f"input_emb_style should be one of category, continuous, scaling, "
@@ -171,7 +174,7 @@ class TransformerModel(nn.Module):
                     batch_first=True,
                     norm_scheme=self.norm_scheme,
                 )
-                self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
+                self.transformer_encoder = RankAwareTransformerEncoder(encoder_layers, nlayers)
         else:
             encoder_layers = TransformerEncoderLayer(
                 d_model, nhead, d_hid, dropout, batch_first=True
@@ -215,6 +218,7 @@ class TransformerModel(nn.Module):
         values: Tensor,
         src_key_padding_mask: Tensor,
         batch_labels: Optional[Tensor] = None,  # (batch,)
+        external_positions: Optional[Tensor] = None,
     ) -> Tensor:
         self._check_batch_labels(batch_labels)
 
@@ -236,9 +240,21 @@ class TransformerModel(nn.Module):
         elif getattr(self, "bn", None) is not None:
             total_embs = self.bn(total_embs.permute(0, 2, 1)).permute(0, 2, 1)
 
-        output = self.transformer_encoder(
-            total_embs, src_key_padding_mask=src_key_padding_mask
-        )
+        if isinstance(self.transformer_encoder, RankAwareTransformerEncoder):
+            output = self.transformer_encoder(
+                total_embs,
+                src_key_padding_mask=src_key_padding_mask,
+                external_positions=external_positions,
+            )
+        elif external_positions is None:
+            output = self.transformer_encoder(
+                total_embs,
+                src_key_padding_mask=src_key_padding_mask,
+            )
+        else:
+            raise NotImplementedError(
+                "Rank-conditioned external RoPE for scGPT currently requires the flash transformer backend"
+            )
         return output  # (batch, seq_len, embsize)
 
     def _get_cell_emb_from_layer(
@@ -284,6 +300,7 @@ class TransformerModel(nn.Module):
         src_key_padding_mask: Optional[Tensor] = None,
         gen_iters: int = 1,
         batch_labels: Optional[Tensor] = None,  # (batch,)
+        external_positions: Optional[Tensor] = None,
     ) -> Tensor:
         """
         Args:
@@ -334,9 +351,17 @@ class TransformerModel(nn.Module):
             src_key_padding_mask = torch.zeros(
                 total_embs.shape[:2], dtype=torch.bool, device=total_embs.device
             )
-        transformer_output = self.transformer_encoder(
-            total_embs, src_key_padding_mask=src_key_padding_mask
-        )
+        if isinstance(self.transformer_encoder, RankAwareTransformerEncoder):
+            transformer_output = self.transformer_encoder(
+                total_embs,
+                src_key_padding_mask=src_key_padding_mask,
+                external_positions=external_positions,
+            )
+        else:
+            transformer_output = self.transformer_encoder(
+                total_embs,
+                src_key_padding_mask=src_key_padding_mask,
+            )
 
         if self.use_batch_labels:
             batch_emb = self.batch_encoder(batch_labels)  # (batch, embsize)
@@ -362,6 +387,7 @@ class TransformerModel(nn.Module):
         values: Tensor,
         src_key_padding_mask: Tensor,
         batch_labels: Optional[Tensor] = None,
+        external_positions: Optional[Tensor] = None,
         CLS: bool = False,
         CCE: bool = False,
         MVC: bool = False,
@@ -388,7 +414,7 @@ class TransformerModel(nn.Module):
             dict of output Tensors.
         """
         transformer_output = self._encode(
-            src, values, src_key_padding_mask, batch_labels
+            src, values, src_key_padding_mask, batch_labels, external_positions=external_positions
         )
         if self.use_batch_labels:
             batch_emb = self.batch_encoder(batch_labels)  # (batch, embsize)
@@ -549,6 +575,27 @@ def generate_square_subsequent_mask(sz: int) -> Tensor:
     return torch.triu(torch.ones(sz, sz) * float("-inf"), diagonal=1)
 
 
+class RankAwareTransformerEncoder(nn.Module):
+    def __init__(self, encoder_layer: nn.Module, num_layers: int):
+        super().__init__()
+        self.layers = nn.ModuleList([deepcopy(encoder_layer) for _ in range(num_layers)])
+
+    def forward(
+        self,
+        src: Tensor,
+        src_key_padding_mask: torch.BoolTensor,
+        external_positions: Optional[Tensor] = None,
+    ) -> Tensor:
+        output = src
+        for layer in self.layers:
+            output = layer(
+                output,
+                src_key_padding_mask=src_key_padding_mask,
+                external_positions=external_positions,
+            )
+        return output
+
+
 class FastTransformerEncoderWrapper(nn.Module):
     def __init__(
         self,
@@ -637,6 +684,71 @@ class FastTransformerEncoderWrapper(nn.Module):
         return output
 
 
+class RankAwareFlashMHA(nn.Module):
+    def __init__(
+        self,
+        embed_dim,
+        num_heads,
+        batch_first=True,
+        attention_dropout=0.0,
+        **kwargs,
+    ):
+        super().__init__()
+        if embed_dim % num_heads != 0:
+            raise ValueError("embed_dim must be divisible by num_heads")
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.batch_first = batch_first
+        self.head_dim = embed_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.Wqkv = nn.Linear(embed_dim, 3 * embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.attn_dropout = nn.Dropout(attention_dropout)
+
+    def forward(self, x, key_padding_mask=None, external_positions: Optional[Tensor] = None, **kwargs):
+        if not self.batch_first:
+            x = x.transpose(0, 1)
+
+        batch_size, seq_len, _ = x.shape
+        qkv = self.Wqkv(x).view(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        query, key, value = qkv[0], qkv[1], qkv[2]
+
+        if external_positions is not None:
+            rope_cache = build_rope_cache(
+                external_positions.to(x.device),
+                dim=self.head_dim,
+            ).to(dtype=x.dtype)
+            query, key = apply_batched_rotary_pos_emb(query, key, rope_cache)
+
+        attn_mask = None
+        if key_padding_mask is not None:
+            attn_mask = torch.zeros(
+                batch_size,
+                1,
+                1,
+                seq_len,
+                device=x.device,
+                dtype=x.dtype,
+            )
+            attn_mask = attn_mask.masked_fill(~key_padding_mask[:, None, None, :], float("-inf"))
+
+        context = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            is_causal=False,
+        )
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
+        output = self.out_proj(context)
+
+        if not self.batch_first:
+            output = output.transpose(0, 1)
+        return output, None
+
+
 class FlashTransformerEncoderLayer(nn.Module):
     r"""TransformerEncoderLayer is made up of self-attn and feedforward network.
     The class is modified from torch.nn.TransformerEncoderLayer to support the
@@ -679,7 +791,7 @@ class FlashTransformerEncoderLayer(nn.Module):
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
-        self.self_attn = FlashMHA(
+        self.self_attn = RankAwareFlashMHA(
             embed_dim=d_model,
             num_heads=nhead,
             batch_first=batch_first,
@@ -723,6 +835,7 @@ class FlashTransformerEncoderLayer(nn.Module):
         src: Tensor,
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
+        external_positions: Optional[Tensor] = None,
         **kwargs,
     ) -> Tensor:
         r"""Pass the input through the encoder layer.
@@ -749,13 +862,21 @@ class FlashTransformerEncoderLayer(nn.Module):
 
         if self.norm_scheme == "pre":
             src = self.norm1(src)
-            src2 = self.self_attn(src, key_padding_mask=src_key_padding_mask_)[0]
+            src2 = self.self_attn(
+                src,
+                key_padding_mask=src_key_padding_mask_,
+                external_positions=external_positions,
+            )[0]
             src = src + self.dropout1(src2)
             src = self.norm2(src)
             src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
             src = src + self.dropout2(src2)
         else:
-            src2 = self.self_attn(src, key_padding_mask=src_key_padding_mask_)[0]
+            src2 = self.self_attn(
+                src,
+                key_padding_mask=src_key_padding_mask_,
+                external_positions=external_positions,
+            )[0]
             src = src + self.dropout1(src2)
             src = self.norm1(src)
             src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))

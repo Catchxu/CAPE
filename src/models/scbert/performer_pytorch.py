@@ -10,6 +10,7 @@ from functools import partial
 from contextlib import contextmanager
 
 from local_attention import LocalAttention
+from ..cape.rope import build_rope_cache, apply_batched_rotary_pos_emb
 from .reversible import ReversibleSequence, SequentialSequence
 
 try:
@@ -428,6 +429,8 @@ def rotate_every_two(x):
     return rearrange(x, '... d j -> ... (d j)')
 
 def apply_rotary_pos_emb(q, k, sinu_pos):
+    if sinu_pos.dim() == 3 and sinu_pos.size(0) > 1:
+        return apply_batched_rotary_pos_emb(q, k, sinu_pos.to(device=q.device, dtype=q.dtype))
     sinu_pos = rearrange(sinu_pos, '() n (j d) -> n j d', j = 2)
     sin, cos = sinu_pos.unbind(dim = -2)
     sin, cos = map(lambda t: repeat(t, 'b n -> b (n j)', j = 2), (sin, cos))
@@ -595,6 +598,7 @@ class PerformerLM(nn.Module):
         local_attn_heads = cast_tuple(local_attn_heads)
 
         self.max_seq_len = max_seq_len
+        self.rotary_dim = dim_head
         self.token_emb = nn.Embedding(num_tokens, dim)
 
         if g2v_position_emb:
@@ -616,7 +620,7 @@ class PerformerLM(nn.Module):
     def fix_projection_matrices_(self):
         self.performer.fix_projection_matrices_()
 
-    def forward(self, x, return_encodings = False, output_attentions = False, **kwargs):
+    def forward(self, x, return_encodings = False, output_attentions = False, external_positions = None, **kwargs):
         b, n, device = *x.shape, x.device
         assert n <= self.max_seq_len, f'sequence length {n} must be less than the max sequence length {self.max_seq_len}'
 
@@ -629,6 +633,17 @@ class PerformerLM(nn.Module):
 
         # performer layers
         layer_pos_emb = self.layer_pos_emb(x)
+        if external_positions is not None:
+            if external_positions.shape != x.shape[:2]:
+                raise ValueError(
+                    f"Expected external_positions shape {tuple(x.shape[:2])}, got {tuple(external_positions.shape)}"
+                )
+            # scBERT keeps its native gene2vec input embedding. CAPE contributes a
+            # separate external RoPE signal that is injected only inside attention.
+            layer_pos_emb = build_rope_cache(
+                external_positions.to(device),
+                dim=self.rotary_dim,
+            ).to(dtype=x.dtype)
 
         if output_attentions:
             x, attn_weights = self.performer(x, pos_emb = layer_pos_emb, output_attentions = output_attentions, **kwargs)

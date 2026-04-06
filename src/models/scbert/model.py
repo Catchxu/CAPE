@@ -41,6 +41,10 @@ class ScBertClassifier(nn.Module):
             num_classes=num_classes,
         )
 
-    def forward(self, input_ids):
-        output = self.backbone(input_ids=input_ids, return_dict=True)
+    def forward(self, input_ids, external_positions=None):
+        output = self.backbone(
+            input_ids=input_ids,
+            external_positions=external_positions,
+            return_dict=True,
+        )
         return self.classifier(output.last_hidden_state)

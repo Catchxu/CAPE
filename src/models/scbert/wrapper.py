@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from ...data.dataset import DictionaryTensorDataset
 from ...data.label_utils import encode_labels
 from ...CTA.metrics import compute_cta_metrics
+from ..cape.integration import build_scbert_external_positions
 from ..pretrained import get_pretrained_source
 from .model import ScBertClassifier
 from .modeling_scbert import ScBertModel
@@ -22,7 +23,7 @@ def _resolve_device(device_name: str):
 
 
 class ScBertBackend:
-    def run_cta(self, config, train_adata, val_adata, test_adata, label_encoder, logger):
+    def run_cta(self, config, train_adata, val_adata, test_adata, label_encoder, logger, shared_state=None):
         model_cfg = config["model"]
         train_cfg = config["train"]
         device = _resolve_device(config["run"]["device"])
@@ -43,10 +44,22 @@ class ScBertBackend:
             label_encoder,
             config,
             processor,
+            model_config,
+            split_name="train",
+            shared_state=shared_state,
             shuffle=True,
         )
         val_loader = (
-            self._build_loader(val_adata, label_encoder, config, processor, shuffle=False)
+            self._build_loader(
+                val_adata,
+                label_encoder,
+                config,
+                processor,
+                model_config,
+                split_name="val",
+                shared_state=shared_state,
+                shuffle=False,
+            )
             if val_adata is not None
             else None
         )
@@ -55,6 +68,9 @@ class ScBertBackend:
             label_encoder,
             config,
             processor,
+            model_config,
+            split_name="test",
+            shared_state=shared_state,
             shuffle=False,
         )
 
@@ -116,7 +132,17 @@ class ScBertBackend:
             "probabilities": test_result["probabilities"],
         }
 
-    def _build_loader(self, adata, label_encoder, config, processor, shuffle: bool):
+    def _build_loader(
+        self,
+        adata,
+        label_encoder,
+        config,
+        processor,
+        model_config,
+        split_name: str,
+        shared_state,
+        shuffle: bool,
+    ):
         tensors = processor.encode_adata(
             adata,
             gene_column=config["data"].get("gene_column"),
@@ -126,16 +152,36 @@ class ScBertBackend:
             adata.obs[config["data"]["label_column"]].astype(str).tolist(),
             label_encoder,
         )
-        dataset = DictionaryTensorDataset(
-            {
-                "input_ids": tensors["input_ids"].long(),
-                "labels": torch.tensor(labels, dtype=torch.long),
-            }
+        dataset_tensors = {
+            "input_ids": tensors["input_ids"].long(),
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
+        external_positions = self._build_external_positions(
+            split_name=split_name,
+            shared_state=shared_state,
+            model_config=model_config,
+            device=dataset_tensors["input_ids"].device,
         )
+        if external_positions is not None:
+            dataset_tensors["external_positions"] = external_positions.long()
+        dataset = DictionaryTensorDataset(dataset_tensors)
         return DataLoader(
             dataset,
             batch_size=int(config["train"]["batch_size"]),
             shuffle=shuffle,
+        )
+
+    def _build_external_positions(self, split_name, shared_state, model_config, device):
+        if shared_state is None:
+            return None
+        split_outputs = shared_state["split_outputs"].get(split_name)
+        if split_outputs is None:
+            return None
+        return build_scbert_external_positions(
+            rank_positions=split_outputs["rank"],
+            gene_token_ids=shared_state["selected_gene_token_ids"],
+            seq_len=int(model_config.max_position_embeddings),
+            device=device,
         )
 
     def _apply_freeze_policy(self, model, freeze_cfg, logger):
@@ -160,8 +206,10 @@ class ScBertBackend:
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
+            external_positions = batch.get("external_positions")
+            external_positions = external_positions.to(device) if external_positions is not None else None
             optimizer.zero_grad()
-            logits = model(input_ids=input_ids)
+            logits = model(input_ids=input_ids, external_positions=external_positions)
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
@@ -178,7 +226,9 @@ class ScBertBackend:
             for batch in loader:
                 input_ids = batch["input_ids"].to(device)
                 labels = batch["labels"].to(device)
-                logits = model(input_ids=input_ids)
+                external_positions = batch.get("external_positions")
+                external_positions = external_positions.to(device) if external_positions is not None else None
+                logits = model(input_ids=input_ids, external_positions=external_positions)
                 loss = criterion(logits, labels)
                 probs = torch.softmax(logits, dim=-1)
                 preds = probs.argmax(dim=-1)

@@ -1,0 +1,14 @@
+cape:
+  enabled: true
+  batch_size: 16
+  epochs: 5
+  learning_rate: 0.001
+  weight_decay: 0.0
+  encoder_backend: scbert
+  max_genes: 512
+  tau: 1.0
+  dropout: 0.1
+  beta_kl: 1.0
+  lambda_sparse: 0.0001
+  num_predictor_layers: 2
+  use_flash_attn: true

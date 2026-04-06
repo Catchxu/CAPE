@@ -68,6 +68,7 @@ class ScGptModel(ScGptPreTrainedModel):
         values: torch.FloatTensor,
         src_key_padding_mask: torch.BoolTensor,
         batch_labels: torch.LongTensor | None = None,
+        external_positions: torch.LongTensor | None = None,
         return_dict: bool = True,
         **kwargs,
     ):
@@ -76,6 +77,7 @@ class ScGptModel(ScGptPreTrainedModel):
             values,
             src_key_padding_mask,
             batch_labels=batch_labels,
+            external_positions=external_positions,
         )
         pooled = self.scgpt._get_cell_emb_from_layer(hidden_states, values)
 

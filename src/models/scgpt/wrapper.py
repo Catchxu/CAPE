@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from ...data.dataset import DictionaryTensorDataset
 from ...data.label_utils import encode_labels
 from ...CTA.metrics import compute_cta_metrics
+from ..cape.integration import build_scgpt_external_positions
 from ..pretrained import get_pretrained_source
 from .configuration_scgpt import ScGptConfig
 from .model import ClsDecoder
@@ -32,18 +33,19 @@ class ScGptClassifier(nn.Module):
             nlayers=nlayers_cls,
         )
 
-    def forward(self, input_gene_ids, values, src_key_padding_mask, batch_labels=None):
+    def forward(self, input_gene_ids, values, src_key_padding_mask, batch_labels=None, external_positions=None):
         outputs = self.backbone(
             input_gene_ids=input_gene_ids,
             values=values,
             src_key_padding_mask=src_key_padding_mask,
             batch_labels=batch_labels,
+            external_positions=external_positions,
         )
         return self.classifier(outputs.pooler_output)
 
 
 class ScGptBackend:
-    def run_cta(self, config, train_adata, val_adata, test_adata, label_encoder, logger):
+    def run_cta(self, config, train_adata, val_adata, test_adata, label_encoder, logger, shared_state=None):
         device = _resolve_device(config["run"]["device"])
         model_cfg = config["model"]
         pretrained_source = get_pretrained_source(model_cfg)
@@ -59,15 +61,35 @@ class ScGptBackend:
         )
 
         train_loader, batch_categories = self._build_loader(
-            train_adata, label_encoder, config, processor, shuffle=True
+            train_adata,
+            label_encoder,
+            config,
+            processor,
+            split_name="train",
+            shared_state=shared_state,
+            shuffle=True,
         )
         val_loader = (
-            self._build_loader(val_adata, label_encoder, config, processor, shuffle=False)[0]
+            self._build_loader(
+                val_adata,
+                label_encoder,
+                config,
+                processor,
+                split_name="val",
+                shared_state=shared_state,
+                shuffle=False,
+            )[0]
             if val_adata is not None
             else None
         )
         test_loader = self._build_loader(
-            test_adata, label_encoder, config, processor, shuffle=False
+            test_adata,
+            label_encoder,
+            config,
+            processor,
+            split_name="test",
+            shared_state=shared_state,
+            shuffle=False,
         )[0]
 
         backbone = ScGptModel.from_pretrained(
@@ -124,8 +146,15 @@ class ScGptBackend:
             "probabilities": test_result["probabilities"],
         }
 
-    def _build_loader(self, adata, label_encoder, config, processor, shuffle: bool):
-        tensors, batch_categories = self._prepare_split_tensors(adata, label_encoder, config, processor)
+    def _build_loader(self, adata, label_encoder, config, processor, split_name, shared_state, shuffle: bool):
+        tensors, batch_categories = self._prepare_split_tensors(
+            adata,
+            label_encoder,
+            config,
+            processor,
+            split_name=split_name,
+            shared_state=shared_state,
+        )
         dataset = DictionaryTensorDataset(tensors)
         loader = DataLoader(
             dataset,
@@ -134,7 +163,7 @@ class ScGptBackend:
         )
         return loader, batch_categories
 
-    def _prepare_split_tensors(self, adata, label_encoder, config, processor):
+    def _prepare_split_tensors(self, adata, label_encoder, config, processor, split_name, shared_state):
         encoded = processor.encode_adata(
             adata,
             gene_column=config["data"].get("gene_column"),
@@ -153,7 +182,27 @@ class ScGptBackend:
             "celltype_labels": torch.tensor(labels, dtype=torch.long),
             "batch_labels": torch.tensor(batch_ids, dtype=torch.long),
         }
+        external_positions = self._build_external_positions(
+            split_name=split_name,
+            shared_state=shared_state,
+            gene_ids=tensors["gene_ids"],
+        )
+        if external_positions is not None:
+            tensors["external_positions"] = external_positions.long()
         return tensors, batch_categories
+
+    def _build_external_positions(self, split_name, shared_state, gene_ids):
+        if shared_state is None:
+            return None
+        split_outputs = shared_state["split_outputs"].get(split_name)
+        if split_outputs is None:
+            return None
+        return build_scgpt_external_positions(
+            rank_positions=split_outputs["rank"],
+            gene_token_ids=shared_state["selected_gene_token_ids"],
+            input_gene_ids=gene_ids,
+            device=gene_ids.device,
+        )
 
     def _train_epoch(self, model, loader, criterion, optimizer, device):
         model.train()
@@ -163,6 +212,8 @@ class ScGptBackend:
             input_values = batch["values"].to(device)
             labels = batch["celltype_labels"].to(device)
             batch_labels = batch["batch_labels"].to(device)
+            external_positions = batch.get("external_positions")
+            external_positions = external_positions.to(device) if external_positions is not None else None
             padding_mask = input_gene_ids.eq(model.backbone.config.pad_token_id)
             optimizer.zero_grad()
             logits = model(
@@ -170,6 +221,7 @@ class ScGptBackend:
                 values=input_values,
                 src_key_padding_mask=padding_mask,
                 batch_labels=batch_labels if model.backbone.config.use_batch_labels else None,
+                external_positions=external_positions,
             )
             loss = criterion(logits, labels)
             loss.backward()
@@ -189,12 +241,15 @@ class ScGptBackend:
                 input_values = batch["values"].to(device)
                 labels = batch["celltype_labels"].to(device)
                 batch_labels = batch["batch_labels"].to(device)
+                external_positions = batch.get("external_positions")
+                external_positions = external_positions.to(device) if external_positions is not None else None
                 padding_mask = input_gene_ids.eq(model.backbone.config.pad_token_id)
                 logits = model(
                     input_gene_ids=input_gene_ids,
                     values=input_values,
                     src_key_padding_mask=padding_mask,
                     batch_labels=batch_labels if model.backbone.config.use_batch_labels else None,
+                    external_positions=external_positions,
                 )
                 loss = criterion(logits, labels)
                 probs = torch.softmax(logits, dim=-1)

@@ -2,6 +2,7 @@ import numpy as np
 
 from ..data.label_utils import build_label_encoder, encode_labels
 from ..data.preprocess import load_and_prepare_adata, split_adata
+from ..models.cape.integration import run_shared_cape_stage
 from ..models import get_backend
 from ..utils.io import ensure_run_directories, save_json, save_predictions, save_yaml
 from ..utils.logger import setup_logger
@@ -37,6 +38,14 @@ def run_cta(config):
         _ = encode_labels(test_adata.obs[label_column].tolist(), label_encoder)
 
     backend = get_backend(model_name)
+    shared_state = run_shared_cape_stage(
+        config=config,
+        train_adata=train_adata,
+        val_adata=val_adata,
+        test_adata=test_adata,
+        logger=logger,
+        result_dir=result_dir,
+    )
     backend_result = backend.run_cta(
         config=config,
         train_adata=train_adata,
@@ -44,6 +53,7 @@ def run_cta(config):
         test_adata=test_adata,
         label_encoder=label_encoder,
         logger=logger,
+        shared_state=shared_state,
     )
 
     save_yaml(result_dir / "config_resolved.yaml", config)
@@ -66,6 +76,8 @@ def run_cta(config):
     }
     if backend_result.get("artifacts"):
         summary["artifacts"].update(backend_result["artifacts"])
+    if shared_state is not None:
+        summary["artifacts"]["cape_dir"] = shared_state["artifact_dir"]
     save_json(result_dir / "summary.json", summary)
 
     save_predictions(

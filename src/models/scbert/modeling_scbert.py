@@ -54,6 +54,7 @@ class ScBertModel(ScBertPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor,
+        external_positions: torch.LongTensor | None = None,
         output_attentions: bool = False,
         return_dict: bool = True,
         **kwargs,
@@ -61,6 +62,7 @@ class ScBertModel(ScBertPreTrainedModel):
         if output_attentions:
             hidden_states, attentions = self.scbert(
                 input_ids,
+                external_positions=external_positions,
                 return_encodings=True,
                 output_attentions=True,
                 **kwargs,
@@ -68,6 +70,7 @@ class ScBertModel(ScBertPreTrainedModel):
         else:
             hidden_states = self.scbert(
                 input_ids,
+                external_positions=external_positions,
                 return_encodings=True,
                 output_attentions=False,
                 **kwargs,

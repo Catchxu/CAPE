@@ -1,3 +1,6 @@
+defaults:
+  - ../CAPE/cape_scbert.yaml
+
 task:
   name: CTA
   metrics:
